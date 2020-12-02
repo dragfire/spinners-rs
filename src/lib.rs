@@ -36,12 +36,13 @@ impl Spinner {
     pub fn start(&self) {
         let interval = self.data.interval as u64;
         let frames: Vec<String> = self.data.frames.iter().map(|s| s.to_string()).collect();
+        let text = self.text.to_owned();
         let join_handle = thread::spawn(move || {
             let frames = &frames;
             loop {
                 for frame in frames {
-                    print!("{}1K{}", ESC_SEQ, frame);
-                    thread::sleep(Duration::from_millis(interval));
+                    print!("{}{}{}D{}2K", frame, ESC_SEQ, text.len(), ESC_SEQ);
+                    thread::sleep(Duration::from_millis(10));
                 }
             }
         });
