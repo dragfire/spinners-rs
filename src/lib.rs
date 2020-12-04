@@ -1,5 +1,6 @@
 //! Show spinners using ASCII characters.
 
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -18,10 +19,13 @@ impl<'a> SpinnerData<'a> {
     }
 }
 
+type StopSpinner = u8;
+
 pub struct Spinner {
     data: SpinnerData<'static>,
     text: String,
     position: Position,
+    sender: Option<mpsc::Sender<StopSpinner>>,
 }
 
 impl Spinner {
@@ -30,23 +34,60 @@ impl Spinner {
             data,
             text: "".to_string(),
             position: Position::After,
+            sender: None,
         }
     }
 
-    pub fn start(&self) {
+    pub fn start(&mut self) {
         let interval = self.data.interval as u64;
         let frames: Vec<String> = self.data.frames.iter().map(|s| s.to_string()).collect();
         let text = self.text.to_owned();
+        let position = self.position;
+        let (sender, receiver) = mpsc::channel::<StopSpinner>();
+        self.sender = Some(sender);
         let join_handle = thread::spawn(move || {
             let frames = &frames;
+
+            // Hide cursor
+            print!("{}?25l", ESC_SEQ);
+
             loop {
                 for frame in frames {
-                    print!("{}{}{}D{}2K", frame, ESC_SEQ, text.len(), ESC_SEQ);
-                    thread::sleep(Duration::from_millis(10));
+                    match position {
+                        Position::Before => {
+                            print!("{}{}", frame, text);
+                        }
+                        Position::After => {
+                            print!("{}{}", text, frame);
+                        }
+                    }
+                    let count = text.len() + frame.len();
+                    print!("{}{}D{}K", ESC_SEQ, count, ESC_SEQ);
+                    thread::sleep(Duration::from_micros(interval * 100));
+                }
+
+                match receiver.try_recv() {
+                    Ok(_) => break,
+                    Err(e) => {
+                        if mpsc::TryRecvError::Disconnected == e {
+                            break;
+                        }
+                    }
                 }
             }
+
+            // Show cursor
+            print!("{}?25h", ESC_SEQ);
         });
         join_handle.join().unwrap();
+    }
+
+    pub fn stop(&self) {
+        if let Some(ref sender) = self.sender {
+            if let Err(e) = sender.send(1) {
+                eprint!("Send error: {:#?}", e);
+            }
+        }
     }
 }
 
@@ -60,9 +101,10 @@ impl Spinner {
 ///     .text("Fetching data...")
 ///     .position(Position::Before).build();
 ///
-///     spinner.stop();
+///     spinner.start();
 /// }
 /// ```
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Position {
     /// Place Spinner before text.
     Before,
@@ -111,7 +153,7 @@ mod tests {
     use super::*;
     #[test]
     fn it_works() {
-        let spinner = SpinnerBuilder::new().text("Fetching data").build();
+        let mut spinner = SpinnerBuilder::new().text("Fetching data").build();
         spinner.start();
     }
 }
